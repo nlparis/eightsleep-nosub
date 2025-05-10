@@ -122,7 +122,9 @@ export const userRouter = createTRPCRouter({
     )
     .mutation(async ({ input }) => {
       try {
+        console.log("login input", input);
         const authResult = await authenticateUser(input.email, input.password);
+        console.log("authResult", authResult);
 
         const approvedEmails = process.env.APPROVED_EMAILS!.split(",").map(email => email.toLowerCase());
 
@@ -131,6 +133,7 @@ export const userRouter = createTRPCRouter({
         }
 
         await saveUserToDatabase(input.email, authResult);
+        console.log("savedUserToDatabase");
 
         const jwtSecret = process.env.JWT_SECRET;
         if (!jwtSecret) {

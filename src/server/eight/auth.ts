@@ -30,8 +30,11 @@ async function makeAuthRequest(data: Record<string, string>): Promise<TokenRespo
     const json: unknown = await response.json();
     const validatedJson = EightTokenSchema.parse(json);
 
+    console.log("validatedJson", validatedJson);
+
     return validatedJson;
   } catch (error) {
+    console.log("makeAuthRequest error", error);
     if (error instanceof AuthError) {
       throw error;
     } else if (error instanceof Error) {
@@ -56,6 +59,7 @@ export async function authenticate(email: string, password: string): Promise<Tok
     if (!tokenResponse.userId) {
       throw new AuthError("Authentication response from eightsleep API should always have a userId when loggin in with credetials");
     }
+    console.log("tokenResponse", tokenResponse);
     return {
       eightAccessToken: tokenResponse.access_token,
       eightRefreshToken: tokenResponse.refresh_token,
@@ -63,6 +67,7 @@ export async function authenticate(email: string, password: string): Promise<Tok
       eightUserId: tokenResponse.userId,
     };
   } catch (error) {
+    console.log("authenticate error", error);
     if (error instanceof AuthError) {
       if (error.statusCode === 401) {
         throw new AuthError("Invalid email or password");
