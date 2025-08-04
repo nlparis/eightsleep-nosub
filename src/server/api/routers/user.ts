@@ -2,13 +2,13 @@ import { z } from "zod";
 import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
 import { db } from "~/server/db";
 import { users, userTemperatureProfile } from "~/server/db/schema";
+import { eq } from "drizzle-orm";
 import { cookies } from "next/headers";
 import {
   authenticate,
   obtainFreshAccessToken,
   AuthError,
 } from "~/server/eight/auth";
-import { eq } from "drizzle-orm";
 import { type Token } from "~/server/eight/types";
 import { TRPCError } from "@trpc/server";
 import { adjustTemperature } from "~/app/api/temperatureCron/route";
@@ -126,12 +126,15 @@ export const userRouter = createTRPCRouter({
         const authResult = await authenticateUser(input.email, input.password);
         console.log("authResult", authResult);
 
-        const approvedEmails = process.env.APPROVED_EMAILS!.split(",").map(email => email.toLowerCase());
+        const approvedEmails = process.env
+          .APPROVED_EMAILS!.split(",")
+          .map((email) => email.toLowerCase());
 
         if (!approvedEmails.includes(input.email.toLowerCase())) {
           throw new AuthError("Email not approved");
         }
 
+        console.log("About to save user to database...");
         await saveUserToDatabase(input.email, authResult);
         console.log("savedUserToDatabase");
 
@@ -326,25 +329,47 @@ async function authenticateUser(email: string, password: string) {
 
 async function saveUserToDatabase(email: string, authResult: Token) {
   try {
-    await db
-      .insert(users)
-      .values({
+    console.log("Starting database operation for user:", email);
+
+    // First try a simple select to test connection
+    console.log("Testing database connection...");
+    const existingUsers = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, email));
+    console.log(
+      "Database connection test successful, existing users found:",
+      existingUsers.length,
+    );
+
+    if (existingUsers.length > 0) {
+      // Update existing user
+      console.log("Updating existing user...");
+      await db
+        .update(users)
+        .set({
+          eightAccessToken: authResult.eightAccessToken,
+          eightRefreshToken: authResult.eightRefreshToken,
+          eightTokenExpiresAt: new Date(authResult.eightExpiresAtPosix),
+          eightUserId: authResult.eightUserId,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.email, email));
+      console.log("User updated successfully");
+    } else {
+      // Insert new user
+      console.log("Inserting new user...");
+      await db.insert(users).values({
         email,
         eightAccessToken: authResult.eightAccessToken,
         eightRefreshToken: authResult.eightRefreshToken,
         eightTokenExpiresAt: new Date(authResult.eightExpiresAtPosix),
         eightUserId: authResult.eightUserId,
-      })
-      .onConflictDoUpdate({
-        target: users.email,
-        set: {
-          eightAccessToken: authResult.eightAccessToken,
-          eightRefreshToken: authResult.eightRefreshToken,
-          eightTokenExpiresAt: new Date(authResult.eightExpiresAtPosix),
-          eightUserId: authResult.eightUserId,
-        },
-      })
-      .execute();
+      });
+      console.log("User inserted successfully");
+    }
+
+    console.log("Database operation completed successfully for user:", email);
   } catch (error) {
     console.error("Database operation failed:", error);
     throw new DatabaseError("Failed to save user token to database.");
