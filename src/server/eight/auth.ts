@@ -1,5 +1,5 @@
 import { AUTH_URL, DEFAULT_AUTH_HEADERS, KNOWN_CLIENT_ID, KNOWN_CLIENT_SECRET } from './constants';
-import { EightTokenSchema, TokenResponse, type Token } from './types';
+import { EightTokenSchema, type TokenResponse, type Token } from './types';
 
 export class AuthError extends Error {
   constructor(message: string, public statusCode?: number) {

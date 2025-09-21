@@ -1,7 +1,5 @@
 import type { NextRequest } from "next/server";
 import { db } from "~/server/db";
-import { userTemperatureProfile, users } from "~/server/db/schema";
-import { eq } from "drizzle-orm";
 import { obtainFreshAccessToken } from "~/server/eight/auth";
 import { type Token } from "~/server/eight/types";
 import { setHeatingLevel, turnOnSide, turnOffSide } from "~/server/eight/eight";
@@ -122,18 +120,19 @@ interface TestMode {
 
 export async function adjustTemperature(testMode?: TestMode): Promise<void> {
   try {
-    const profiles = await db
-      .select()
-      .from(userTemperatureProfile)
-      .innerJoin(users, eq(userTemperatureProfile.email, users.email));
+    const profiles = await db.userTemperatureProfile.findMany({
+      include: {
+        user: true,
+      },
+    });
 
     for (const profile of profiles) {
       try {
         let token: Token = {
-          eightAccessToken: profile.users.eightAccessToken,
-          eightRefreshToken: profile.users.eightRefreshToken,
-          eightExpiresAtPosix: profile.users.eightTokenExpiresAt.getTime(),
-          eightUserId: profile.users.eightUserId,
+          eightAccessToken: profile.user.eightAccessToken,
+          eightRefreshToken: profile.user.eightRefreshToken,
+          eightExpiresAtPosix: profile.user.eightTokenExpiresAt.getTime(),
+          eightUserId: profile.user.eightUserId,
         };
 
         const now = testMode?.enabled ? testMode.currentTime : new Date();
@@ -143,28 +142,27 @@ export async function adjustTemperature(testMode?: TestMode): Promise<void> {
             token.eightRefreshToken,
             token.eightUserId,
           );
-          await db
-            .update(users)
-            .set({
+          await db.user.update({
+            where: { email: profile.user.email },
+            data: {
               eightAccessToken: token.eightAccessToken,
               eightRefreshToken: token.eightRefreshToken,
               eightTokenExpiresAt: new Date(token.eightExpiresAtPosix),
-            })
-            .where(eq(users.email, profile.users.email));
+            },
+          });
         }
 
-        const userTemperatureProfile = profile.userTemperatureProfiles;
         const userNow = new Date(
           now.toLocaleString("en-US", {
-            timeZone: userTemperatureProfile.timezoneTZ,
+            timeZone: profile.timezoneTZ,
           }),
         );
 
         // Create the sleep cycle based on the user's bed time and wake-up time
         const sleepCycle = createSleepCycle(
           userNow,
-          userTemperatureProfile.bedTime,
-          userTemperatureProfile.wakeupTime,
+          profile.bedTime,
+          profile.wakeupTime,
         );
 
         // Adjust all times in the cycle to the current day
@@ -210,13 +208,13 @@ export async function adjustTemperature(testMode?: TestMode): Promise<void> {
         }
 
         console.log(
-          `Current heating status for user ${profile.users.email}:`,
+          `Current heating status for user ${profile.user.email}:`,
           JSON.stringify(heatingStatus),
         );
         console.log(
-          `User's current time: ${userNow.toISOString()} for user ${profile.users.email}`,
+          `User's current time: ${userNow.toISOString()} for user ${profile.user.email}`,
         );
-        console.log(`Adjusted times for user ${profile.users.email}:`);
+        console.log(`Adjusted times for user ${profile.user.email}:`);
         console.log(
           `Pre-heating: ${adjustedCycle.preHeatingTime.toISOString()}`,
         );
@@ -278,7 +276,7 @@ export async function adjustTemperature(testMode?: TestMode): Promise<void> {
         }
 
         console.log(
-          `Current sleep stage for user ${profile.users.email}: ${currentSleepStage}`,
+          `Current sleep stage for user ${profile.user.email}: ${currentSleepStage}`,
         );
 
         if (
@@ -295,52 +293,52 @@ export async function adjustTemperature(testMode?: TestMode): Promise<void> {
             isNearPreHeating ||
             (isNearBedTime && userNow < adjustedCycle.bedTime)
           ) {
-            targetLevel = userTemperatureProfile.initialSleepLevel;
+            targetLevel = profile.initialSleepLevel;
             sleepStage = "pre-heating";
           } else if (
             isNearBedTime ||
             (isNearMidStage && userNow < adjustedCycle.midStageTime)
           ) {
-            targetLevel = userTemperatureProfile.initialSleepLevel;
+            targetLevel = profile.initialSleepLevel;
             sleepStage = "initial";
           } else if (
             isNearMidStage ||
             (isNearFinalStage && userNow < adjustedCycle.finalStageTime)
           ) {
-            targetLevel = userTemperatureProfile.midStageSleepLevel;
+            targetLevel = profile.midStageSleepLevel;
             sleepStage = "mid";
           } else {
-            targetLevel = userTemperatureProfile.finalSleepLevel;
+            targetLevel = profile.finalSleepLevel;
             sleepStage = "final";
           }
 
           console.log(
-            `Adjusting temperature for ${sleepStage} stage for user ${profile.users.email}`,
+            `Adjusting temperature for ${sleepStage} stage for user ${profile.user.email}`,
           );
 
           if (!heatingStatus.isHeating) {
             if (testMode?.enabled) {
               console.log(
-                `[TEST MODE] Would turn on heating for user ${profile.users.email}`,
+                `[TEST MODE] Would turn on heating for user ${profile.user.email}`,
               );
             } else {
               await retryApiCall(() =>
-                turnOnSide(token, profile.users.eightUserId),
+                turnOnSide(token, profile.user.eightUserId),
               );
-              console.log(`Heating turned on for user ${profile.users.email}`);
+              console.log(`Heating turned on for user ${profile.user.email}`);
             }
           }
           if (heatingStatus.heatingLevel !== targetLevel) {
             if (testMode?.enabled) {
               console.log(
-                `[TEST MODE] Would set heating level to ${targetLevel} for user ${profile.users.email}`,
+                `[TEST MODE] Would set heating level to ${targetLevel} for user ${profile.user.email}`,
               );
             } else {
               await retryApiCall(() =>
-                setHeatingLevel(token, profile.users.eightUserId, targetLevel),
+                setHeatingLevel(token, profile.user.eightUserId, targetLevel),
               );
               console.log(
-                `Heating level set to ${targetLevel} for user ${profile.users.email}`,
+                `Heating level set to ${targetLevel} for user ${profile.user.email}`,
               );
             }
           }
@@ -352,26 +350,26 @@ export async function adjustTemperature(testMode?: TestMode): Promise<void> {
           // Only turn off heating if it's more than 15 minutes past wake-up time
           if (testMode?.enabled) {
             console.log(
-              `[TEST MODE] Would turn off heating for user ${profile.users.email}`,
+              `[TEST MODE] Would turn off heating for user ${profile.user.email}`,
             );
           } else {
             await retryApiCall(() =>
-              turnOffSide(token, profile.users.eightUserId),
+              turnOffSide(token, profile.user.eightUserId),
             );
-            console.log(`Heating turned off for user ${profile.users.email}`);
+            console.log(`Heating turned off for user ${profile.user.email}`);
           }
         } else {
           console.log(
-            `No temperature change needed for user ${profile.users.email}`,
+            `No temperature change needed for user ${profile.user.email}`,
           );
         }
 
         console.log(
-          `Successfully completed temperature adjustment check for user ${profile.users.email}`,
+          `Successfully completed temperature adjustment check for user ${profile.user.email}`,
         );
       } catch (error) {
         console.error(
-          `Error adjusting temperature for user ${profile.users.email}:`,
+          `Error adjusting temperature for user ${profile.user.email}:`,
           error instanceof Error ? error.message : String(error),
         );
       }

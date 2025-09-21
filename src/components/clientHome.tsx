@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { EightLoginDialog } from "~/components/eightLogin";
 import { TemperatureProfileForm } from "~/components/temperatureProfileForm";
 import { LogoutButton } from "~/components/logout";
@@ -10,7 +10,26 @@ export default function ClientHome({
 }: {
   initialLoginState: boolean;
 }) {
-  const [isLoggedIn, setIsLoggedIn] = useState(initialLoginState);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setIsLoggedIn(initialLoginState);
+    setMounted(true);
+  }, [initialLoginState]);
+
+  if (!mounted) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-[#2e026d] to-[#15162c] text-white">
+        <div className="container flex flex-col items-center justify-center gap-12 px-4 py-16">
+          <h1 className="text-center text-5xl font-extrabold tracking-tight sm:text-[5rem]">
+            Eightsleep <span className="text-[hsl(280,100%,70%)]">Nosub</span>{" "}
+            App
+          </h1>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-[#2e026d] to-[#15162c] text-white">

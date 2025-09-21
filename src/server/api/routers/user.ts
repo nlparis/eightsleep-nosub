@@ -1,8 +1,6 @@
 import { z } from "zod";
 import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
 import { db } from "~/server/db";
-import { users, userTemperatureProfile } from "~/server/db/schema";
-import { eq } from "drizzle-orm";
 import { cookies } from "next/headers";
 import {
   authenticate,
@@ -63,17 +61,19 @@ export const userRouter = createTRPCRouter({
       }
       const email = decoded.email;
 
-      const userList = await db
-        .select()
-        .from(users)
-        .where(eq(users.email, email))
-        .execute();
-
-      if (userList.length !== 1 || userList[0] === undefined) {
+      let user;
+      try {
+        user = await db.user.findUnique({
+          where: { email },
+        });
+      } catch (error) {
+        console.error("Database error finding user:", error);
         return { loginRequired: true };
       }
 
-      const user = userList[0];
+      if (!user) {
+        return { loginRequired: true };
+      }
 
       // check if token is expired, and if so, refresh it
       if (user.eightTokenExpiresAt < new Date()) {
@@ -88,15 +88,14 @@ export const userRouter = createTRPCRouter({
             user.eightUserId,
           );
 
-          await db
-            .update(users)
-            .set({
+          await db.user.update({
+            where: { email },
+            data: {
               eightAccessToken,
               eightRefreshToken,
               eightTokenExpiresAt: new Date(expiresAt),
-            })
-            .where(eq(users.email, email))
-            .execute();
+            },
+          });
 
           return { loginRequired: false };
         } catch (error) {
@@ -201,9 +200,23 @@ export const userRouter = createTRPCRouter({
     try {
       const decoded = await checkAuthCookie(ctx.headers);
 
-      const profile = await db.query.userTemperatureProfile.findFirst({
-        where: eq(userTemperatureProfile.email, decoded.email),
-      });
+      console.log("debug: getUserTemperatureProfile", decoded.email);
+
+      let profile;
+      try {
+        profile = await db.userTemperatureProfile.findUnique({
+          where: { email: decoded.email },
+        });
+      } catch (dbError) {
+        console.error("Database error fetching temperature profile:", dbError);
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message:
+            "Database error occurred while fetching the temperature profile.",
+        });
+      }
+
+      console.log("debug: getUserTemperatureProfile", profile);
 
       if (!profile) {
         throw new TRPCError({
@@ -214,6 +227,9 @@ export const userRouter = createTRPCRouter({
 
       return profile;
     } catch (error) {
+      if (error instanceof TRPCError) {
+        throw error;
+      }
       console.error("Error fetching user temperature profile:", error);
       throw new TRPCError({
         code: "INTERNAL_SERVER_ERROR",
@@ -249,12 +265,19 @@ export const userRouter = createTRPCRouter({
         };
         console.log("Updated profile:", updatedProfile);
 
-        await db
-          .insert(userTemperatureProfile)
-          .values(updatedProfile)
-          .onConflictDoUpdate({
-            target: userTemperatureProfile.email,
-            set: {
+        try {
+          await db.userTemperatureProfile.upsert({
+            where: { email: decoded.email },
+            create: {
+              email: decoded.email,
+              bedTime: input.bedTime,
+              wakeupTime: input.wakeupTime,
+              initialSleepLevel: input.initialSleepLevel,
+              midStageSleepLevel: input.midStageSleepLevel,
+              finalSleepLevel: input.finalSleepLevel,
+              timezoneTZ: input.timezoneTZ,
+            },
+            update: {
               bedTime: input.bedTime,
               wakeupTime: input.wakeupTime,
               initialSleepLevel: input.initialSleepLevel,
@@ -263,8 +286,17 @@ export const userRouter = createTRPCRouter({
               timezoneTZ: input.timezoneTZ,
               updatedAt: new Date(),
             },
-          })
-          .execute();
+          });
+        } catch (dbError) {
+          console.error(
+            "Database error updating temperature profile:",
+            dbError,
+          );
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to update temperature profile in database.",
+          });
+        }
 
         await adjustTemperature();
 
@@ -285,12 +317,12 @@ export const userRouter = createTRPCRouter({
       const email = decoded.email;
 
       // Delete user temperature profile
-      const result = await db
-        .delete(userTemperatureProfile)
-        .where(eq(userTemperatureProfile.email, email))
-        .execute();
-
-      if (result.rowCount === 0) {
+      try {
+        await db.userTemperatureProfile.delete({
+          where: { email },
+        });
+      } catch (dbError) {
+        console.error("Database error deleting temperature profile:", dbError);
         throw new TRPCError({
           code: "NOT_FOUND",
           message: "Temperature profile not found for this user.",
@@ -333,40 +365,57 @@ async function saveUserToDatabase(email: string, authResult: Token) {
 
     // First try a simple select to test connection
     console.log("Testing database connection...");
-    const existingUsers = await db
-      .select()
-      .from(users)
-      .where(eq(users.email, email));
+    let existingUser;
+    try {
+      existingUser = await db.user.findUnique({
+        where: { email },
+      });
+    } catch (dbError) {
+      console.error("Database connection test failed:", dbError);
+      throw new DatabaseError("Failed to connect to database.");
+    }
     console.log(
-      "Database connection test successful, existing users found:",
-      existingUsers.length,
+      "Database connection test successful, user exists:",
+      !!existingUser,
     );
 
-    if (existingUsers.length > 0) {
+    if (existingUser) {
       // Update existing user
       console.log("Updating existing user...");
-      await db
-        .update(users)
-        .set({
-          eightAccessToken: authResult.eightAccessToken,
-          eightRefreshToken: authResult.eightRefreshToken,
-          eightTokenExpiresAt: new Date(authResult.eightExpiresAtPosix),
-          eightUserId: authResult.eightUserId,
-          updatedAt: new Date(),
-        })
-        .where(eq(users.email, email));
-      console.log("User updated successfully");
+      try {
+        await db.user.update({
+          where: { email },
+          data: {
+            eightAccessToken: authResult.eightAccessToken,
+            eightRefreshToken: authResult.eightRefreshToken,
+            eightTokenExpiresAt: new Date(authResult.eightExpiresAtPosix),
+            eightUserId: authResult.eightUserId,
+            updatedAt: new Date(),
+          },
+        });
+        console.log("User updated successfully");
+      } catch (dbError) {
+        console.error("Failed to update user:", dbError);
+        throw new DatabaseError("Failed to update user in database.");
+      }
     } else {
       // Insert new user
       console.log("Inserting new user...");
-      await db.insert(users).values({
-        email,
-        eightAccessToken: authResult.eightAccessToken,
-        eightRefreshToken: authResult.eightRefreshToken,
-        eightTokenExpiresAt: new Date(authResult.eightExpiresAtPosix),
-        eightUserId: authResult.eightUserId,
-      });
-      console.log("User inserted successfully");
+      try {
+        await db.user.create({
+          data: {
+            email,
+            eightAccessToken: authResult.eightAccessToken,
+            eightRefreshToken: authResult.eightRefreshToken,
+            eightTokenExpiresAt: new Date(authResult.eightExpiresAtPosix),
+            eightUserId: authResult.eightUserId,
+          },
+        });
+        console.log("User inserted successfully");
+      } catch (dbError) {
+        console.error("Failed to create user:", dbError);
+        throw new DatabaseError("Failed to create user in database.");
+      }
     }
 
     console.log("Database operation completed successfully for user:", email);

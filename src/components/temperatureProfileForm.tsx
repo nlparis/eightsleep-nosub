@@ -25,7 +25,9 @@ type TemperatureProfileForm = z.infer<typeof temperatureProfileSchema>;
 export const TemperatureProfileForm: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isExistingProfile, setIsExistingProfile] = useState(false);
-  const [sleepDurationError, setSleepDurationError] = useState<string | null>(null);
+  const [sleepDurationError, setSleepDurationError] = useState<string | null>(
+    null,
+  );
 
   const {
     register,
@@ -43,7 +45,7 @@ export const TemperatureProfileForm: React.FC = () => {
       initialSleepLevel: 0,
       midStageSleepLevel: 0,
       finalSleepLevel: 0,
-      timezone: { value: "America/New_York"},
+      timezone: { value: "America/New_York" },
     },
   });
 
@@ -56,12 +58,16 @@ export const TemperatureProfileForm: React.FC = () => {
     finalStageTime: "",
   });
 
-  const getUserTemperatureProfileQuery = apiR.user.getUserTemperatureProfile.useQuery();
-  
+  const getUserTemperatureProfileQuery =
+    apiR.user.getUserTemperatureProfile.useQuery();
 
   useEffect(() => {
-    if (getUserTemperatureProfileQuery.isSuccess) {
-      const profile = getUserTemperatureProfileQuery.data;
+    if (
+      getUserTemperatureProfileQuery.isSuccess &&
+      getUserTemperatureProfileQuery.data
+    ) {
+      const profile =
+        getUserTemperatureProfileQuery.data as UserTemperatureProfile;
       setValue("bedTime", profile.bedTime.slice(0, 5));
       setValue("wakeupTime", profile.wakeupTime.slice(0, 5));
       setValue("initialSleepLevel", profile.initialSleepLevel / 10);
@@ -71,11 +77,20 @@ export const TemperatureProfileForm: React.FC = () => {
       setIsExistingProfile(true);
       setIsLoading(false);
     } else if (getUserTemperatureProfileQuery.isError) {
-      console.error("Failed to fetch temperature profile. Using default values.", getUserTemperatureProfileQuery.error);
+      console.error(
+        "Failed to fetch temperature profile. Using default values.",
+        getUserTemperatureProfileQuery.error,
+      );
       setIsExistingProfile(false);
       setIsLoading(false);
     }
-  }, [getUserTemperatureProfileQuery.isSuccess, getUserTemperatureProfileQuery.isError, getUserTemperatureProfileQuery.data, setValue, getUserTemperatureProfileQuery.error]);
+  }, [
+    getUserTemperatureProfileQuery.isSuccess,
+    getUserTemperatureProfileQuery.isError,
+    getUserTemperatureProfileQuery.data,
+    setValue,
+    getUserTemperatureProfileQuery.error,
+  ]);
 
   useEffect(() => {
     if (bedTime && wakeupTime) {
@@ -91,13 +106,15 @@ export const TemperatureProfileForm: React.FC = () => {
       const minutes = Math.round((durationMs % (1000 * 60 * 60)) / (1000 * 60));
 
       // Check if sleep duration is less than 4 hours
-      if (hours < 4 ) {
+      if (hours < 4) {
         setSleepDurationError("Sleep duration must be at least 4 hours.");
         setSleepInfo({ duration: "", midStageTime: "", finalStageTime: "" });
       } else {
         setSleepDurationError(null);
         const midStageDate = new Date(bedDate.getTime() + 60 * 60 * 1000); // 1 hour after bedtime
-        const finalStageDate = new Date(wakeDate.getTime() - 2 * 60 * 60 * 1000); // 2 hours before wakeup
+        const finalStageDate = new Date(
+          wakeDate.getTime() - 2 * 60 * 60 * 1000,
+        ); // 2 hours before wakeup
 
         setSleepInfo({
           duration: `${hours} hours ${minutes} minutes`,
@@ -147,13 +164,17 @@ export const TemperatureProfileForm: React.FC = () => {
       timezoneTZ: data.timezone.value,
     };
 
-    console.log('Data being sent to server:', mutationData);
+    console.log("Data being sent to server:", mutationData);
 
     updateProfileMutation.mutate(mutationData);
   };
 
   const onDelete = () => {
-    if (window.confirm("Are you sure you want to delete your temperature profile?")) {
+    if (
+      window.confirm(
+        "Are you sure you want to delete your temperature profile?",
+      )
+    ) {
       deleteProfileMutation.mutate();
     }
   };
@@ -311,7 +332,9 @@ export const TemperatureProfileForm: React.FC = () => {
             className="flex-grow rounded-md border border-transparent bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
             disabled={updateProfileMutation.isPending || !!sleepDurationError}
           >
-            {updateProfileMutation.isPending ? "Updating..." : (isExistingProfile ? "Update" : "Create") + " Profile"}
+            {updateProfileMutation.isPending
+              ? "Updating..."
+              : (isExistingProfile ? "Update" : "Create") + " Profile"}
           </Button>
           {isExistingProfile && (
             <Button
@@ -320,7 +343,9 @@ export const TemperatureProfileForm: React.FC = () => {
               className="ml-4 rounded-md border border-transparent bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
               disabled={deleteProfileMutation.isPending}
             >
-              {deleteProfileMutation.isPending ? "Deleting..." : "Delete Schedule"}
+              {deleteProfileMutation.isPending
+                ? "Deleting..."
+                : "Delete Schedule"}
             </Button>
           )}
         </div>
