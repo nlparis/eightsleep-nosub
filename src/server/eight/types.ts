@@ -24,37 +24,41 @@ export const DeviceListSchema = z.object({
 });
 
 export const UserProfileSchema = z.object({
-  user: z.object({
-    userId: z.string().optional(),
-    email: z.string().optional(),
-    firstName: z.string().optional(),
-    lastName: z.string().optional(),
-    gender: z.string().optional(),
-    tempPreference: z.string().optional(),
-    tempPreferenceUpdatedAt: z.string().optional(),
-    dob: z.string().optional(),
-    zip: z.number().optional(),
-    devices: z.array(z.string()),
-    emailVerified: z.boolean().optional(),
-    sharingMetricsTo: z.array(z.unknown()).optional(),
-    sharingMetricsFrom: z.array(z.unknown()).optional(),
-    notifications: z.record(z.boolean()).optional(),
-    createdAt: z.string().optional(),
-    experimentalFeatures: z.boolean().optional(),
-    autopilotEnabled: z.boolean().optional(),
-    lastReset: z.string().optional(),
-    nextReset: z.string().optional(),
-    sleepTracking: z.object({
-      enabledSince: z.string().optional(),
-    }).optional(),
-    features: z.array(z.string()).optional(),
-    currentDevice: z.object({
-      id: z.string(),
-      side: z.string(),
-      timeZone: z.string(),
-    }),
-    hotelGuest: z.boolean().optional(),
-  }).catchall(z.unknown()),
+  user: z
+    .object({
+      userId: z.string().optional(),
+      email: z.string().optional(),
+      firstName: z.string().optional(),
+      lastName: z.string().optional(),
+      gender: z.string().optional(),
+      tempPreference: z.string().optional(),
+      tempPreferenceUpdatedAt: z.string().optional(),
+      dob: z.string().optional(),
+      zip: z.number().optional(),
+      devices: z.array(z.string()),
+      emailVerified: z.boolean().optional(),
+      sharingMetricsTo: z.array(z.unknown()).optional(),
+      sharingMetricsFrom: z.array(z.unknown()).optional(),
+      notifications: z.record(z.boolean()).optional(),
+      createdAt: z.string().optional(),
+      experimentalFeatures: z.boolean().optional(),
+      autopilotEnabled: z.boolean().optional(),
+      lastReset: z.string().optional(),
+      nextReset: z.string().optional(),
+      sleepTracking: z
+        .object({
+          enabledSince: z.string().optional(),
+        })
+        .optional(),
+      features: z.array(z.string()).optional(),
+      currentDevice: z.object({
+        id: z.string(),
+        side: z.string(),
+        timeZone: z.string(),
+      }),
+      hotelGuest: z.boolean().optional(),
+    })
+    .catchall(z.unknown()),
 });
 
 export const DeviceDataSchema = z.object({
@@ -140,7 +144,7 @@ export const TemperatureDataSchema = z.object({
     currentLevel: z.number(),
     currentDeviceLevel: z.number(),
     currentState: z.object({
-      type: z.enum(["smart", "off"]),
+      type: z.enum(["smart", "off", "timeBased"]),
     }),
     smart: z.record(z.number()),
   }),
