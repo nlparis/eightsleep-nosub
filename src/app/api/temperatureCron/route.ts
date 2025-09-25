@@ -328,7 +328,14 @@ export async function adjustTemperature(testMode?: TestMode): Promise<void> {
               console.log(`Heating turned on for user ${profile.user.email}`);
             }
           }
+          // Ensure the heating is turned on before setting the heating level
           if (heatingStatus.heatingLevel !== targetLevel) {
+            if (!heatingStatus.isHeating) {
+              await retryApiCall(() =>
+                turnOnSide(token, profile.user.eightUserId),
+              );
+              console.log(`Heating turned on for user ${profile.user.email}`);
+            }
             if (testMode?.enabled) {
               console.log(
                 `[TEST MODE] Would set heating level to ${targetLevel} for user ${profile.user.email}`,
