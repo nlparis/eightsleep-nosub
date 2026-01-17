@@ -2,8 +2,7 @@ import type { NextRequest } from "next/server";
 import { db } from "~/server/db";
 import { obtainFreshAccessToken } from "~/server/eight/auth";
 import { type Token } from "~/server/eight/types";
-import { setHeatingLevel, turnOnSide, turnOffSide } from "~/server/eight/eight";
-import { getCurrentHeatingStatus } from "~/server/eight/user";
+import { getSideHeatingStatus, setDeviceTemperatures } from "~/server/eight/dual-side";
 
 export const runtime = "nodejs";
 
@@ -118,6 +117,187 @@ interface TestMode {
   currentTime: Date;
 }
 
+interface SideProfile {
+  bedTime: string;
+  wakeupTime: string;
+  initialSleepLevel: number;
+  midStageSleepLevel: number;
+  finalSleepLevel: number;
+}
+
+// Calculate what temperature a side should be set to (or null to turn off)
+async function calculateSideTemperature(
+  token: Token,
+  side: "left" | "right",
+  sideProfile: SideProfile,
+  userNow: Date,
+  userEmail: string,
+  testMode?: TestMode,
+): Promise<number | null> {
+  const logLabel = side === "left" ? "LEFT (User)" : "RIGHT (Partner)";
+  
+  // Create the sleep cycle for this side
+        const sleepCycle = createSleepCycle(
+          userNow,
+    sideProfile.bedTime,
+    sideProfile.wakeupTime,
+        );
+
+        // Adjust all times in the cycle to the current day
+        const cycleStart = sleepCycle.preHeatingTime;
+        const adjustedCycle: SleepCycle = {
+          preHeatingTime: adjustTimeToCurrentCycle(
+            cycleStart,
+            userNow,
+            sleepCycle.preHeatingTime,
+          ),
+          bedTime: adjustTimeToCurrentCycle(
+            cycleStart,
+            userNow,
+            sleepCycle.bedTime,
+          ),
+          midStageTime: adjustTimeToCurrentCycle(
+            cycleStart,
+            userNow,
+            sleepCycle.midStageTime,
+          ),
+          finalStageTime: adjustTimeToCurrentCycle(
+            cycleStart,
+            userNow,
+            sleepCycle.finalStageTime,
+          ),
+          wakeupTime: adjustTimeToCurrentCycle(
+            cycleStart,
+            userNow,
+            sleepCycle.wakeupTime,
+          ),
+        };
+
+        let heatingStatus;
+        if (testMode?.enabled) {
+    heatingStatus = { isHeating: false, heatingLevel: 0 };
+  } else {
+    try {
+      const sideStatus = await retryApiCall(() =>
+        getSideHeatingStatus(token, side),
+      );
+      if (Array.isArray(sideStatus)) {
+        throw new Error("Expected single side status");
+      }
+      if (!sideStatus) {
+        console.warn(
+          `[${logLabel}] No heating status returned, defaulting to off`,
+        );
+        heatingStatus = { isHeating: false, heatingLevel: 0 };
+        } else {
+        heatingStatus = {
+          isHeating: sideStatus.isHeating ?? false,
+          heatingLevel: sideStatus.heatingLevel ?? 0,
+        };
+      }
+    } catch (error) {
+      console.error(
+        `[${logLabel}] Error getting heating status:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      // Default to off state if we can't get status
+      heatingStatus = { isHeating: false, heatingLevel: 0 };
+    }
+        }
+
+        console.log(
+    `[${logLabel}] Current heating status for user ${userEmail}:`,
+          JSON.stringify(heatingStatus),
+        );
+  console.log(`[${logLabel}] Adjusted times for user ${userEmail}:`);
+        console.log(
+    `  Pre-heating: ${adjustedCycle.preHeatingTime.toISOString()}`,
+  );
+  console.log(`  Bed time: ${adjustedCycle.bedTime.toISOString()}`);
+  console.log(`  Mid stage: ${adjustedCycle.midStageTime.toISOString()}`);
+  console.log(`  Final stage: ${adjustedCycle.finalStageTime.toISOString()}`);
+  console.log(`  Wake-up: ${adjustedCycle.wakeupTime.toISOString()}`);
+
+        const isNearPreHeating = isWithinTimeRange(
+          userNow,
+          adjustedCycle.preHeatingTime,
+          15,
+        );
+        const isNearBedTime = isWithinTimeRange(
+          userNow,
+          adjustedCycle.bedTime,
+          15,
+        );
+        const isNearMidStage = isWithinTimeRange(
+          userNow,
+          adjustedCycle.midStageTime,
+          15,
+        );
+        const isNearFinalStage = isWithinTimeRange(
+          userNow,
+          adjustedCycle.finalStageTime,
+          15,
+        );
+        const isNearWakeup = isWithinTimeRange(
+          userNow,
+          adjustedCycle.wakeupTime,
+          15,
+        );
+
+        // Determine if we should be heating and what temperature
+        if (
+          isNearPreHeating ||
+          isNearBedTime ||
+          isNearMidStage ||
+          isNearFinalStage ||
+          isNearWakeup
+        ) {
+          let targetLevel: number;
+          let sleepStage: string;
+
+          if (
+            isNearPreHeating ||
+            (isNearBedTime && userNow < adjustedCycle.bedTime)
+          ) {
+            targetLevel = sideProfile.initialSleepLevel;
+            sleepStage = "pre-heating";
+          } else if (
+            isNearBedTime ||
+            (isNearMidStage && userNow < adjustedCycle.midStageTime)
+          ) {
+            targetLevel = sideProfile.initialSleepLevel;
+            sleepStage = "initial";
+          } else if (
+            isNearMidStage ||
+            (isNearFinalStage && userNow < adjustedCycle.finalStageTime)
+          ) {
+            targetLevel = sideProfile.midStageSleepLevel;
+            sleepStage = "mid";
+          } else {
+            targetLevel = sideProfile.finalSleepLevel;
+            sleepStage = "final";
+          }
+
+          console.log(
+            `[${logLabel}] Should be heating at ${targetLevel} for ${sleepStage} stage`,
+          );
+          return targetLevel;
+        } else if (
+          heatingStatus.isHeating &&
+          userNow > adjustedCycle.wakeupTime &&
+          !isWithinTimeRange(userNow, adjustedCycle.wakeupTime, 15)
+        ) {
+          // Turn off heating if it's more than 15 minutes past wake-up time
+          console.log(`[${logLabel}] Should turn off heating (past wake-up time)`);
+          return null;
+        } else {
+          console.log(
+            `[${logLabel}] No temperature change needed`,
+          );
+          return heatingStatus.isHeating ? heatingStatus.heatingLevel : null;
+        }
+}
+
 export async function adjustTemperature(testMode?: TestMode): Promise<void> {
   try {
     const profiles = await db.userTemperatureProfile.findMany({
@@ -158,216 +338,96 @@ export async function adjustTemperature(testMode?: TestMode): Promise<void> {
           }),
         );
 
-        // Create the sleep cycle based on the user's bed time and wake-up time
-        const sleepCycle = createSleepCycle(
-          userNow,
-          profile.bedTime,
-          profile.wakeupTime,
-        );
-
-        // Adjust all times in the cycle to the current day
-        const cycleStart = sleepCycle.preHeatingTime;
-        const adjustedCycle: SleepCycle = {
-          preHeatingTime: adjustTimeToCurrentCycle(
-            cycleStart,
-            userNow,
-            sleepCycle.preHeatingTime,
-          ),
-          bedTime: adjustTimeToCurrentCycle(
-            cycleStart,
-            userNow,
-            sleepCycle.bedTime,
-          ),
-          midStageTime: adjustTimeToCurrentCycle(
-            cycleStart,
-            userNow,
-            sleepCycle.midStageTime,
-          ),
-          finalStageTime: adjustTimeToCurrentCycle(
-            cycleStart,
-            userNow,
-            sleepCycle.finalStageTime,
-          ),
-          wakeupTime: adjustTimeToCurrentCycle(
-            cycleStart,
-            userNow,
-            sleepCycle.wakeupTime,
-          ),
-        };
-
-        let heatingStatus;
-        if (testMode?.enabled) {
-          heatingStatus = { isHeating: false, heatingLevel: 0 }; // Mock heating status for test mode
-          console.log(
-            `[TEST MODE] Current time set to: ${userNow.toISOString()}`,
-          );
-        } else {
-          heatingStatus = await retryApiCall(() =>
-            getCurrentHeatingStatus(token),
-          );
-        }
-
-        console.log(
-          `Current heating status for user ${profile.user.email}:`,
-          JSON.stringify(heatingStatus),
-        );
         console.log(
           `User's current time: ${userNow.toISOString()} for user ${profile.user.email}`,
         );
-        console.log(`Adjusted times for user ${profile.user.email}:`);
-        console.log(
-          `Pre-heating: ${adjustedCycle.preHeatingTime.toISOString()}`,
-        );
-        console.log(`Bed time: ${adjustedCycle.bedTime.toISOString()}`);
-        console.log(`Mid stage: ${adjustedCycle.midStageTime.toISOString()}`);
-        console.log(
-          `Final stage: ${adjustedCycle.finalStageTime.toISOString()}`,
-        );
-        console.log(`Wake-up: ${adjustedCycle.wakeupTime.toISOString()}`);
 
-        const isNearPreHeating = isWithinTimeRange(
-          userNow,
-          adjustedCycle.preHeatingTime,
-          15,
-        );
-        const isNearBedTime = isWithinTimeRange(
-          userNow,
-          adjustedCycle.bedTime,
-          15,
-        );
-        const isNearMidStage = isWithinTimeRange(
-          userNow,
-          adjustedCycle.midStageTime,
-          15,
-        );
-        const isNearFinalStage = isWithinTimeRange(
-          userNow,
-          adjustedCycle.finalStageTime,
-          15,
-        );
-        const isNearWakeup = isWithinTimeRange(
-          userNow,
-          adjustedCycle.wakeupTime,
-          15,
+        // Check if partner profile exists
+        // Type assertion for partner fields that were just added to the schema
+        const profileWithPartner = profile as typeof profile & {
+          partnerBedTime?: string | null;
+          partnerWakeupTime?: string | null;
+          partnerInitialSleepLevel?: number | null;
+          partnerMidStageSleepLevel?: number | null;
+          partnerFinalSleepLevel?: number | null;
+        };
+
+        const hasPartnerProfile = !!(
+          profileWithPartner.partnerBedTime &&
+          profileWithPartner.partnerWakeupTime &&
+          profileWithPartner.partnerInitialSleepLevel !== null &&
+          profileWithPartner.partnerMidStageSleepLevel !== null &&
+          profileWithPartner.partnerFinalSleepLevel !== null
         );
 
-        // Determine current sleep stage
-        let currentSleepStage = "outside sleep cycle";
-        if (
-          userNow >= adjustedCycle.preHeatingTime &&
-          userNow < adjustedCycle.bedTime
-        ) {
-          currentSleepStage = "pre-heating";
-        } else if (
-          userNow >= adjustedCycle.bedTime &&
-          userNow < adjustedCycle.midStageTime
-        ) {
-          currentSleepStage = "initial";
-        } else if (
-          userNow >= adjustedCycle.midStageTime &&
-          userNow < adjustedCycle.finalStageTime
-        ) {
-          currentSleepStage = "mid";
-        } else if (
-          userNow >= adjustedCycle.finalStageTime &&
-          userNow < adjustedCycle.wakeupTime
-        ) {
-          currentSleepStage = "final";
+        // Calculate temperatures for BOTH sides
+        // User sleeps on LEFT side, Partner sleeps on RIGHT side
+        const primaryProfile: SideProfile = {
+          bedTime: profile.bedTime,
+          wakeupTime: profile.wakeupTime,
+          initialSleepLevel: profile.initialSleepLevel,
+          midStageSleepLevel: profile.midStageSleepLevel,
+          finalSleepLevel: profile.finalSleepLevel,
+        };
+
+        // Determine user's (left side) temperature
+        const userTargetTemp: number | null = await calculateSideTemperature(
+          token,
+          "left",
+          primaryProfile,
+          userNow,
+          profile.user.email,
+          testMode,
+        );
+
+        // Determine partner's (right side) temperature if profile exists
+        let partnerTargetTemp: number | null = null;
+        if (hasPartnerProfile) {
+          console.log(
+            `Partner profile detected for user ${profile.user.email}, processing partner side`,
+          );
+          const partnerProfile: SideProfile = {
+            bedTime: profileWithPartner.partnerBedTime!,
+            wakeupTime: profileWithPartner.partnerWakeupTime!,
+            initialSleepLevel: profileWithPartner.partnerInitialSleepLevel!,
+            midStageSleepLevel: profileWithPartner.partnerMidStageSleepLevel!,
+            finalSleepLevel: profileWithPartner.partnerFinalSleepLevel!,
+          };
+
+          partnerTargetTemp = await calculateSideTemperature(
+            token,
+            "right",
+            partnerProfile,
+            userNow,
+            profile.user.email,
+            testMode,
+          );
         }
 
-        console.log(
-          `Current sleep stage for user ${profile.user.email}: ${currentSleepStage}`,
-        );
-
-        if (
-          isNearPreHeating ||
-          isNearBedTime ||
-          isNearMidStage ||
-          isNearFinalStage ||
-          isNearWakeup
-        ) {
-          let targetLevel: number;
-          let sleepStage: string;
-
-          if (
-            isNearPreHeating ||
-            (isNearBedTime && userNow < adjustedCycle.bedTime)
-          ) {
-            targetLevel = profile.initialSleepLevel;
-            sleepStage = "pre-heating";
-          } else if (
-            isNearBedTime ||
-            (isNearMidStage && userNow < adjustedCycle.midStageTime)
-          ) {
-            targetLevel = profile.initialSleepLevel;
-            sleepStage = "initial";
-          } else if (
-            isNearMidStage ||
-            (isNearFinalStage && userNow < adjustedCycle.finalStageTime)
-          ) {
-            targetLevel = profile.midStageSleepLevel;
-            sleepStage = "mid";
-          } else {
-            targetLevel = profile.finalSleepLevel;
-            sleepStage = "final";
-          }
-
+        // Apply temperatures to BOTH sides in a single API call
+        try {
           console.log(
-            `Adjusting temperature for ${sleepStage} stage for user ${profile.user.email}`,
+            `[DEVICE] Setting temperatures - LEFT (user): ${userTargetTemp ?? "off"}, RIGHT (partner): ${partnerTargetTemp ?? "off"}`,
           );
 
-          if (!heatingStatus.isHeating) {
-            if (testMode?.enabled) {
-              console.log(
-                `[TEST MODE] Would turn on heating for user ${profile.user.email}`,
-              );
-            } else {
-              await retryApiCall(() =>
-                turnOnSide(token, profile.user.eightUserId),
-              );
-              console.log(`Heating turned on for user ${profile.user.email}`);
-            }
-          }
-          // Ensure the heating is turned on before setting the heating level
-          if (heatingStatus.heatingLevel !== targetLevel) {
-            if (!heatingStatus.isHeating) {
-              await retryApiCall(() =>
-                turnOnSide(token, profile.user.eightUserId),
-              );
-              console.log(`Heating turned on for user ${profile.user.email}`);
-            }
-            if (testMode?.enabled) {
-              console.log(
-                `[TEST MODE] Would set heating level to ${targetLevel} for user ${profile.user.email}`,
-              );
-            } else {
-              await retryApiCall(() =>
-                setHeatingLevel(token, profile.user.eightUserId, targetLevel),
-              );
-              console.log(
-                `Heating level set to ${targetLevel} for user ${profile.user.email}`,
-              );
-            }
-          }
-        } else if (
-          heatingStatus.isHeating &&
-          userNow > adjustedCycle.wakeupTime &&
-          !isWithinTimeRange(userNow, adjustedCycle.wakeupTime, 15)
-        ) {
-          // Only turn off heating if it's more than 15 minutes past wake-up time
-          if (testMode?.enabled) {
-            console.log(
-              `[TEST MODE] Would turn off heating for user ${profile.user.email}`,
-            );
+          if (!testMode?.enabled) {
+            await retryApiCall<void>(async () => {
+              await setDeviceTemperatures(token, {
+                leftLevel: userTargetTemp,
+                rightLevel: partnerTargetTemp,
+              });
+            });
           } else {
-            await retryApiCall(() =>
-              turnOffSide(token, profile.user.eightUserId),
+            console.log(
+              `[TEST MODE] Would set - LEFT: ${userTargetTemp ?? "off"}, RIGHT: ${partnerTargetTemp ?? "off"}`,
             );
-            console.log(`Heating turned off for user ${profile.user.email}`);
           }
-        } else {
-          console.log(
-            `No temperature change needed for user ${profile.user.email}`,
+
+          console.log(`[DEVICE] Successfully updated both sides`);
+        } catch (error) {
+          console.error(
+            `[DEVICE] Error setting temperatures for user ${profile.user.email}:`,
+            error instanceof Error ? error.message : String(error),
           );
         }
 

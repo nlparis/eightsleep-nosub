@@ -21,7 +21,15 @@ export async function fetchWithAuth<T extends z.ZodType<unknown, z.ZodTypeDef, u
   if (!response.ok) {
     throw new Error(`API request failed: ${response.status}`);
   }
-  const data: unknown = await response.json();
+  
+  // Handle empty responses (like HTTP 204 No Content)
+  const text = await response.text();
+  if (!text || text.trim() === '') {
+    // If schema expects an empty object, return that
+    return schema.parse({});
+  }
+  
+  const data: unknown = JSON.parse(text);
   return schema.parse(data);
 }
 

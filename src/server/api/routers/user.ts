@@ -248,6 +248,12 @@ export const userRouter = createTRPCRouter({
         midStageSleepLevel: z.number().int().min(-100).max(100),
         finalSleepLevel: z.number().int().min(-100).max(100),
         timezoneTZ: z.string().max(50),
+        // Optional partner profile fields
+        partnerBedTime: z.string().time().nullable().optional(),
+        partnerWakeupTime: z.string().time().nullable().optional(),
+        partnerInitialSleepLevel: z.number().int().min(-100).max(100).nullable().optional(),
+        partnerMidStageSleepLevel: z.number().int().min(-100).max(100).nullable().optional(),
+        partnerFinalSleepLevel: z.number().int().min(-100).max(100).nullable().optional(),
       }),
     )
     .mutation(async ({ input, ctx }) => {
@@ -276,6 +282,11 @@ export const userRouter = createTRPCRouter({
               midStageSleepLevel: input.midStageSleepLevel,
               finalSleepLevel: input.finalSleepLevel,
               timezoneTZ: input.timezoneTZ,
+              partnerBedTime: input.partnerBedTime ?? null,
+              partnerWakeupTime: input.partnerWakeupTime ?? null,
+              partnerInitialSleepLevel: input.partnerInitialSleepLevel ?? null,
+              partnerMidStageSleepLevel: input.partnerMidStageSleepLevel ?? null,
+              partnerFinalSleepLevel: input.partnerFinalSleepLevel ?? null,
             },
             update: {
               bedTime: input.bedTime,
@@ -284,6 +295,11 @@ export const userRouter = createTRPCRouter({
               midStageSleepLevel: input.midStageSleepLevel,
               finalSleepLevel: input.finalSleepLevel,
               timezoneTZ: input.timezoneTZ,
+              partnerBedTime: input.partnerBedTime ?? null,
+              partnerWakeupTime: input.partnerWakeupTime ?? null,
+              partnerInitialSleepLevel: input.partnerInitialSleepLevel ?? null,
+              partnerMidStageSleepLevel: input.partnerMidStageSleepLevel ?? null,
+              partnerFinalSleepLevel: input.partnerFinalSleepLevel ?? null,
               updatedAt: new Date(),
             },
           });
