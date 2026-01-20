@@ -370,17 +370,17 @@ export async function adjustTemperature(testMode?: TestMode): Promise<void> {
           finalSleepLevel: profile.finalSleepLevel,
         };
 
-        // Determine user's (left side) temperature
+        // Determine user's (right side) temperature
         const userTargetTemp: number | null = await calculateSideTemperature(
           token,
-          "left",
+          "right",
           primaryProfile,
           userNow,
           profile.user.email,
           testMode,
         );
 
-        // Determine partner's (right side) temperature if profile exists
+        // Determine partner's (left side) temperature if profile exists
         let partnerTargetTemp: number | null = null;
         if (hasPartnerProfile) {
           console.log(
@@ -396,7 +396,7 @@ export async function adjustTemperature(testMode?: TestMode): Promise<void> {
 
           partnerTargetTemp = await calculateSideTemperature(
             token,
-            "right",
+            "left",
             partnerProfile,
             userNow,
             profile.user.email,
@@ -406,20 +406,20 @@ export async function adjustTemperature(testMode?: TestMode): Promise<void> {
 
         // Apply temperatures to BOTH sides in a single API call
         try {
-          console.log(
-            `[DEVICE] Setting temperatures - LEFT (user): ${userTargetTemp ?? "off"}, RIGHT (partner): ${partnerTargetTemp ?? "off"}`,
+            console.log(
+            `[DEVICE] Setting temperatures - RIGHT (user): ${userTargetTemp ?? "off"}, LEFT (partner): ${partnerTargetTemp ?? "off"}`,
           );
 
           if (!testMode?.enabled) {
             await retryApiCall<void>(async () => {
               await setDeviceTemperatures(token, {
-                leftLevel: userTargetTemp,
-                rightLevel: partnerTargetTemp,
+                rightLevel: userTargetTemp,
+                leftLevel: partnerTargetTemp,
               });
             });
           } else {
             console.log(
-              `[TEST MODE] Would set - LEFT: ${userTargetTemp ?? "off"}, RIGHT: ${partnerTargetTemp ?? "off"}`,
+              `[TEST MODE] Would set - RIGHT: ${userTargetTemp ?? "off"}, LEFT: ${partnerTargetTemp ?? "off"}`,
             );
           }
 
